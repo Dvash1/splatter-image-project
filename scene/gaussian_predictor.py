@@ -1,11 +1,11 @@
 import torch
 import torch.nn as nn
 import torchvision 
-import matplotlib.pyplot as plt
+
 import numpy as np
 import torch
 from torch.nn.functional import silu
-import matplotlib.colors as mcolors
+
 from einops import rearrange, repeat
 
 from utils.general_utils import matrix_to_quaternion, quaternion_raw_multiply
@@ -434,10 +434,10 @@ class SingleImageSongUNetPredictor(nn.Module):
         self.out_channels = out_channels
         self.cfg = cfg
         if cfg.cam_embd.embedding is None:
-            in_channels = 4
+            in_channels = 3
             emb_dim_in = 0
         else:
-            in_channels = 4
+            in_channels = 3
             emb_dim_in = 6 * cfg.cam_embd.dimension
 
         self.encoder = SongUNet(cfg.data.training_resolution, 
@@ -553,27 +553,27 @@ class GaussianSplatPredictor(nn.Module):
         bias_inits = []
 
         if with_offset:
-            split_dimensions = split_dimensions + [3, 1, 3, 4, 3]
-            scale_inits = scale_inits + [
+            split_dimensions = split_dimensions + [1, 3, 1, 3, 4, 3]
+            scale_inits = scale_inits + [cfg.model.depth_scale, 
                            cfg.model.xyz_scale, 
                            cfg.model.opacity_scale, 
                            cfg.model.scale_scale,
                            1.0,
                            5.0]
-            bias_inits = [
+            bias_inits = [cfg.model.depth_bias,
                           cfg.model.xyz_bias, 
                           cfg.model.opacity_bias,
                           np.log(cfg.model.scale_bias),
                           0.0,
                           0.0]
         else:
-            split_dimensions = split_dimensions + [1, 3, 4, 3]
-            scale_inits = scale_inits + [
+            split_dimensions = split_dimensions + [1, 1, 3, 4, 3]
+            scale_inits = scale_inits + [cfg.model.depth_scale, 
                            cfg.model.opacity_scale, 
                            cfg.model.scale_scale,
                            1.0,
                            5.0]
-            bias_inits = bias_inits + [
+            bias_inits = bias_inits + [cfg.model.depth_bias,
                           cfg.model.opacity_bias,
                           np.log(cfg.model.scale_bias),
                           0.0,
@@ -599,8 +599,7 @@ class GaussianSplatPredictor(nn.Module):
         return x.reshape(x.shape[0], x.shape[1], -1).permute(0, 2, 1)
 
     def make_contiguous(self, tensor_dict):
-        # return {k: v.contiguous() for k, v in tensor_dict.items()}
-        return {k: (v.contiguous() if k != 'depth' else v) for k, v in tensor_dict.items()}
+        return {k: v.contiguous() for k, v in tensor_dict.items()}
 
     def multi_view_union(self, tensor_dict, B, N_view):
         for t_name, t in tensor_dict.items():
@@ -687,14 +686,8 @@ class GaussianSplatPredictor(nn.Module):
                 source_cameras_view_to_world, 
                 source_cv2wT_quat=None,
                 focals_pixels=None,
-                activate_output=True,
-                num_epoch=5000
-                ):
-        # Pull the depth image from the data x
-        # print(f'x shape = {x.shape}')
-        depth = x[:,:,3,...]
-        # print(f'depth shape = {depth.shape}')
-        
+                activate_output=True):
+
         B = x.shape[0]
         N_views = x.shape[1]
         # UNet attention will reshape outputs so that there is cross-view attention
@@ -725,116 +718,20 @@ class GaussianSplatPredictor(nn.Module):
 
         source_cameras_view_to_world = source_cameras_view_to_world.reshape(B*N_views, *source_cameras_view_to_world.shape[2:])
         x = x.contiguous(memory_format=torch.channels_last)
-        
-
 
         if self.cfg.model.network_with_offset:
-            #
+
             split_network_outputs = self.network_with_offset(x,
                                                              film_camera_emb=film_camera_emb,
                                                              N_views_xa=N_views_xa
                                                              )
-            print(f'split_network_outputs shape before= {split_network_outputs.shape}')
+
             split_network_outputs = split_network_outputs.split(self.split_dimensions_with_offset, dim=1)
-            # print(f'split_network_outputs shape after= {split_network_outputs.shape}')
-            offset, opacity, scaling, rotation, features_dc = split_network_outputs[:5]
-            print(f'opacity shape= {opacity.shape}')
-
-
-            # print(f'------------------------------------------------------- DEPTH SHAPE  {depth.shape}')
-            # if num_epoch % 100 == 0:
-            #     torch.set_printoptions(profile="full")
-            #     save_path = f'E:\\Coding\\Computer Vision\\splatter-image\\tests\\training_out_1'
-
-                # # Convert tensors to NumPy arrays
-                # depth_array = depth.detach().cpu().numpy()
-                # offset_array = offset.detach().cpu().numpy()
-                # opacity_array = opacity.detach().cpu().numpy()
-                # scaling_array = scaling.detach().cpu().numpy()
-                # rotation_array = rotation.detach().cpu().numpy()
-                # features_dc_array = features_dc.detach().cpu().numpy()
-
-                # # Save all the arrays into a single text file
-                # with open(save_path, 'w') as f:
-                #     f.write('--------------DEPTH------------\n')
-                #     np.savetxt(f, depth_array.flatten(), fmt='%.8f')
-
-                #     f.write('\n--------------OFFSET------------\n')
-                #     np.savetxt(f, offset_array.flatten(), fmt='%.8f')
-
-                #     f.write('\n--------------OPACITY------------\n')
-                #     np.savetxt(f, opacity_array.flatten(), fmt='%.8f')
-
-                #     f.write('\n--------------SCALING------------\n')
-                #     np.savetxt(f, scaling_array.flatten(), fmt='%.8f')
-
-                #     f.write('\n--------------ROTATION------------\n')
-                #     np.savetxt(f, rotation_array.flatten(), fmt='%.8f')
-
-                #     f.write('\n--------------FEATURES_DC------------\n')
-                #     np.savetxt(f, features_dc_array.flatten(), fmt='%.8f')
-
-
-                # depth_im = depth.detach().cpu().squeeze(1).numpy()  # Remove batch and channel dimension if present
-
-                # # If you have multiple images in the batch, you can loop through them
-                # for i in range(depth_im.shape[0]):
-                #     # Normalize the depth image to the range [0, 1]
-                #     min_val = depth_im[i].min()
-                #     max_val = depth_im[i].max()
-                #     normalized_depth = (depth_im[i] - min_val) / (max_val - min_val)
-                                    
-                #     depth_image_uint8 = (normalized_depth * 255).astype('uint8')
-
-                #     # Display the normalized grayscale image
-                #     plt.imshow(depth_image_uint8, cmap='gray')
-                #     plt.colorbar()
-                #     plt.title(f"Depth Image {i+1}")
-                #     plt.savefig(save_path + f'\\output_{num_epoch}_depth_{i}64.png')
-                #     plt.clf()
-
-                # # Assuming 'offset' has the shape (2, 3, 128, 128)
-                # offset_im = offset.detach().cpu().numpy()  # Convert to numpy array
-                
-                # for i in range(offset_im.shape[0]):
-
-                #     # Select the i-th image in the batch
-                #     offset_im1 = offset_im[i]  # Shape becomes (3, 128, 128)
-
-                #     # Normalize each channel independently to [0, 255] range
-                #     offset_im1 = 255 * (offset_im1 - offset_im1.min(axis=(1, 2), keepdims=True)) / (offset_im1.ptp(axis=(1, 2), keepdims=True))
-
-                #     # Transpose the image to (H, W, 3) for RGB visualization
-                #     offset_im1 = np.transpose(offset_im1, (1, 2, 0)).astype(np.uint8)  # Shape becomes (128, 128, 3)
-
-                #     # Display the offset image as an RGB image
-                #     plt.imshow(offset_im1)
-                #     plt.title(f"Offset Image as 2D RGB {i+1}")
-
-                #     norm_x = mcolors.Normalize(vmin=0, vmax=255)
-                #     norm_y = mcolors.Normalize(vmin=0, vmax=255)
-                #     norm_z = mcolors.Normalize(vmin=0, vmax=255)
-
-                #     # Add color bars for each channel
-                #     cbar_x = plt.colorbar(plt.cm.ScalarMappable(cmap='Reds', norm=norm_x), ax=plt.gca(), orientation='horizontal', fraction=0.046, pad=0.04)
-                #     cbar_x.set_label('X Offset (Red)')
-                    
-                #     cbar_y = plt.colorbar(plt.cm.ScalarMappable(cmap='Greens', norm=norm_y), ax=plt.gca(), orientation='horizontal', fraction=0.046, pad=0.08)
-                #     cbar_y.set_label('Y Offset (Green)')
-                    
-                #     cbar_z = plt.colorbar(plt.cm.ScalarMappable(cmap='Blues', norm=norm_z), ax=plt.gca(), orientation='horizontal', fraction=0.046, pad=0.12)
-                #     cbar_z.set_label('Z Offset (Blue)')
-
-                #     plt.savefig(f"{save_path}\\output_{num_epoch}_xyz_{i}64.png")
-
-                #     plt.clf()
-
-                        
+            depth, offset, opacity, scaling, rotation, features_dc = split_network_outputs[:6]
             if self.cfg.model.max_sh_degree > 0:
-                features_rest = split_network_outputs[5]
+                features_rest = split_network_outputs[6]
 
             pos = self.get_pos_from_network_output(depth, offset, focals_pixels, const_offset=const_offset)
-
 
         else:
             split_network_outputs = self.network_wo_offset(x, 
@@ -842,18 +739,11 @@ class GaussianSplatPredictor(nn.Module):
                                                            N_views_xa=N_views_xa
                                                            ).split(self.split_dimensions_without_offset, dim=1)
 
-            opacity, scaling, rotation, features_dc = split_network_outputs[:4]
+            depth, opacity, scaling, rotation, features_dc = split_network_outputs[:5]
             if self.cfg.model.max_sh_degree > 0:
-                features_rest = split_network_outputs[4]
+                features_rest = split_network_outputs[5]
 
             pos = self.get_pos_from_network_output(depth, 0.0, focals_pixels, const_offset=const_offset)
-            # print("*****************GOT HERE***************")
-            # if num_epoch % 250 == 1:
-            #     with open(f'E:\\Coding\\Computer Vision\\splatter-image\\tests\\training_out_1\\depth.{num_epoch}.txt', 'w') as f:
-            #         f.write('--------------DEPTH------------')
-            #         f.write(depth)
-
-                    
 
         if self.cfg.model.isotropic:
             scaling_out = torch.cat([scaling[:, :1, ...], scaling[:, :1, ...], scaling[:, :1, ...]], dim=1)
@@ -872,7 +762,6 @@ class GaussianSplatPredictor(nn.Module):
             "xyz": pos, 
             "rotation": self.flatten_vector(self.rotation_activation(rotation)),
             "features_dc": self.flatten_vector(features_dc).unsqueeze(2)
-            # "depth": depth.detach().cpu().squeeze(1).numpy()
                 }
 
         if activate_output:

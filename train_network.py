@@ -159,7 +159,7 @@ def main(cfg: DictConfig):
     iteration = first_iter
 
     for num_epoch in range((cfg.opt.iterations + 1 - first_iter)// len(dataloader) + 1):
-        
+        # dataloader.sampler.set_epoch(num_epoch)        
 
         for data in dataloader:
             iteration += 1
@@ -177,17 +177,12 @@ def main(cfg: DictConfig):
             else:
                 focals_pixels_pred = None
                 input_images = data["gt_images"][:, :cfg.data.input_images, ...]
-                # print(f'input_channel={input_images.shape}')
-                depth_channel = data["depths"][:, :cfg.data.input_images, ...]
-                # print(f'depth_channel={depth_channel.shape}')
-                input_images = torch.cat((input_images, depth_channel), dim=2) 
-                # print(f'input_channel={input_images.shape}')
 
             gaussian_splats = gaussian_predictor(input_images,
                                                 data["view_to_world_transforms"][:, :cfg.data.input_images, ...],
                                                 rot_transform_quats,
-                                                focals_pixels_pred, num_epoch=iteration)
-            # gaussian_splats.pop('depth')
+                                                focals_pixels_pred)
+
 
             if cfg.data.category == "hydrants" or cfg.data.category == "teddybears":
                 # regularize very big gaussians
@@ -258,11 +253,7 @@ def main(cfg: DictConfig):
                 ema.update()
 
             print("finished iteration {} on process {}".format(iteration, fabric.global_rank))
-            # print(f'FABRIC.IS_GLOBAL_ZERO: {fabric.is_global_zero}')
-            # print(f'render_log:{cfg.logging.render_log}')
-            # print(f'loop_log:{cfg.logging.loop_log}')
-            # print(f"FIRST IF:{(iteration % cfg.logging.render_log == 0 or iteration == 1) and fabric.is_global_zero}")
-            # print(f"SECOND IF:{(iteration % cfg.logging.loop_log == 0 or iteration == 1) and fabric.is_global_zero}")
+
             gaussian_predictor.eval()
 
             # ========= Logging =============
@@ -284,12 +275,10 @@ def main(cfg: DictConfig):
                         wandb.log({"reg_loss_big": np.log10(brl_for_log + 1e-8)}, step=iteration)
                         wandb.log({"reg_loss_small": np.log10(srl_for_log + 1e-8)}, step=iteration)
 
-                if (iteration % cfg.logging.render_log == 0 or iteration == 0) and fabric.is_global_zero:
-                    print("Hello Lior")
+                if (iteration % cfg.logging.render_log == 0 or iteration == 1) and fabric.is_global_zero:
                     wandb.log({"render": wandb.Image(image.clamp(0.0, 1.0).permute(1, 2, 0).detach().cpu().numpy())}, step=iteration)
                     wandb.log({"gt": wandb.Image(gt_image.permute(1, 2, 0).detach().cpu().numpy())}, step=iteration)
-                if (iteration % cfg.logging.loop_log == 0 or iteration == 0) and fabric.is_global_zero:
-                    print("Hello Daniel")
+                if (iteration % cfg.logging.loop_log == 0 or iteration == 1) and fabric.is_global_zero:
                     # torch.cuda.empty_cache()
                     try:
                         vis_data = next(test_iterator)
@@ -309,26 +298,15 @@ def main(cfg: DictConfig):
                         input_images = torch.cat([vis_data["gt_images"][:, :cfg.data.input_images, ...],
                                                 vis_data["origin_distances"][:, :cfg.data.input_images, ...]],
                                                 dim=2)
-                        depth_channel = torch.zeros_like(input_images[:, :1, :, :]) 
-                        print(f'**********************************shape of input_images="{input_images.shape}"')
-                        
-                        
-                        # input_images = torch.cat((input_images, depth_channel), dim=1)
                     else:
                         focals_pixels_pred = None
                         input_images = vis_data["gt_images"][:, :cfg.data.input_images, ...]
-                        # print(f'**********************************shape of input_images="{input_images.shape}"')
-                        depth_channel = vis_data["depths"][:, :cfg.data.input_images, ...]
-                        # print(f'**********************************shape of depth_channel="{depth_channel.shape}"')
-                        input_images = torch.cat((input_images, depth_channel), dim=2) 
-                        # print(f'**********************************shape of last input images ="{input_images.shape}"')
-
 
                     gaussian_splats_vis = gaussian_predictor(input_images,
                                                         vis_data["view_to_world_transforms"][:, :cfg.data.input_images, ...],
                                                         rot_transform_quats,
                                                         focals_pixels_pred)
-                    # gaussian_splats_vis.pop('depth')
+
                     test_loop = []
                     test_loop_gt = []
                     for r_idx in range(vis_data["gt_images"].shape[1]):
